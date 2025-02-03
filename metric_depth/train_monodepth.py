@@ -215,31 +215,32 @@ def train_one_epoch(
             gt_depth = gt_depth.flip(-1)
             mask = mask.flip(-1)
 
-        if profiler:
-            with record_function("train_batch"):
+        for i in range(10):
+            if profiler:
+                with record_function("train_batch"):
+                    pred_depth = model(rgb)
+                    loss = loss_fn(pred_depth, gt_depth, torch.ones_like(gt_depth, device=device))
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+            else:
                 pred_depth = model(rgb)
                 loss = loss_fn(pred_depth, gt_depth, torch.ones_like(gt_depth, device=device))
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-        else:
-            pred_depth = model(rgb)
-            loss = loss_fn(pred_depth, gt_depth, torch.ones_like(gt_depth, device=device))
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
 
+            if profiler:
+                profiler.step()
+        
         total_loss += loss.item()
 
         if (batch_idx % 10 == 0):
             logging.info(f"[Epoch {epoch}] Train Batch {batch_idx}/{len(loader)} | "
                          f"Loss: {loss.item():.4f}")
 
-        if profiler:
-            profiler.step()
-
         # Quick debug saves every 10 steps
-        if debug and (batch_idx % 1 == 0):
+        if debug and (batch_idx % 10 == 0):
             detached_pred = pred_depth[0].detach().cpu().numpy()
             detached_gt   = gt_depth[0].detach().cpu().numpy()
             detached_rgb  = rgb[0].detach().cpu().numpy()
@@ -303,7 +304,7 @@ def validate_one_epoch(
 
     for batch_idx, batch in enumerate(loader):
         rgb = batch['rgb'].to(device)
-        gt_depth = batch['gt'].to(device)
+        gt_depth = batch['gt'].to(device).squeeze()
         mask = batch.get('mask', None)
         if mask is not None:
             mask = mask.to(device)
@@ -508,7 +509,9 @@ def main(config_path: str):
     loss_fn = SiLogLoss().to(device)
 
     # 10) Training Loop
-    previous_best = {'d1': 0, 'd2': 0, 'd3': 0, 'abs_rel': 100, 'sq_rel': 100, 'rmse': 100, 'rmse_log': 100, 'log10': 100, 'silog': 100}
+    #previous_best = {'d1': 0, 'd2': 0, 'd3': 0, 'abs_rel': 100, 'sq_rel': 100, 'rmse': 100, 'rmse_log': 100, 'log10': 100, 'silog': 100}
+    best_train_loss = 0.0
+    best_val_loss = 0.0
     best_model_state = None
     epochs = training_cfg.get("epochs", 10)
 
