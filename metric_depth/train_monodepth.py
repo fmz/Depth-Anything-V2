@@ -18,7 +18,8 @@ import piqa
 
 # Local project imports
 from nyuloader_v2 import NYUDepthDataset
-from depth_anything_v2.dpt import DepthAnythingV2
+#from depth_anything_v2.dpt import DepthAnythingV2
+from depth_anything_v2.resnet_dc import DepthCompletionModel
 from utils import (
     get_optimizer,
     save_depth,
@@ -99,15 +100,17 @@ class MonoDepthLoss:
         if pred.ndim == 3:
             pred = pred.unsqueeze(1)
 
-        # Crop edges if needed
-        pred = pred[:, :, 8:-8, 8:-8]
-        target = target[:, :, 8:-8, 8:-8]
-        if rgb is not None:
-            rgb = rgb[:, :, 8:-8, 8:-8]
+        # # Crop edges if needed
+        # pred = pred[:, :, 8:-8, 8:-8]
+        # target = target[:, :, 8:-8, 8:-8]
+        # if rgb is not None:
+        #     rgb = rgb[:, :, 8:-8, 8:-8]
+        # if mask is not None:
+        #      mask = mask[:, :, 8:-8, 8:-8]
 
         # Example: Masked L1 (you can revert to actual L1, MSE, etc.)
         if mask is not None:
-            valid = mask[:, :, 8:-8, 8:-8].bool()
+            valid = mask.bool()
             l1_loss = F.l1_loss(pred[valid], target[valid])
         else:
             l1_loss = F.l1_loss(pred, target)
@@ -116,24 +119,24 @@ class MonoDepthLoss:
             # diff = torch.pow(diff + 1, 3) + diff + 1 # NOT really L1...
             # l1_loss = torch.mean(diff)
 
-        logging.debug(f'L1 loss: {l1_loss}')
+        #logging.debug(f'L1 loss: {l1_loss}')
 
         loss = l1_loss
 
         # Combine with SSIM
         # We'll do a basic "normalized" approach if pred & target have non-zero ranges
-        max_p, min_p = pred.max(), pred.min()
-        max_t, min_t = target.max(), target.min()
+        # max_p, min_p = pred.max(), pred.min()
+        # max_t, min_t = target.max(), target.min()
 
-        if max_p > min_p and max_t > min_t:
-            pred_norm = (pred - min_p) / (max_p - min_p)
-            targ_norm = (target - min_t) / (max_t - min_t)
+        # if max_p > min_p and max_t > min_t:
+        #     pred_norm = (pred - min_p) / (max_p - min_p)
+        #     targ_norm = (target - min_t) / (max_t - min_t)
 
-            ssim_loss = 1.0 - self.ssim(pred_norm, targ_norm)
+        #     ssim_loss = 1.0 - self.ssim(pred_norm, targ_norm)
 
-            logging.debug(f'SSIM loss: {ssim_loss}')
+        #     logging.debug(f'SSIM loss: {ssim_loss}')
 
-            loss = loss + 0.2 * ssim_loss
+        #     loss = loss + 0.2 * ssim_loss
 
         # Perform edge-aware-smoothness loss if rgb is available
         # if rgb is not None:
@@ -204,8 +207,10 @@ def train_one_epoch(
 
     for batch_idx, batch in enumerate(loader):
         rgb = batch['rgb'].to(device)
-        gt_depth = batch['gt'].to(device)
+        gt_depth = batch['gt'].unsqueeze(1).to(device)
+        depth = batch['depth'].unsqueeze(1).to(device)
         mask = batch.get('mask', None)
+
         if mask is not None:
             mask = mask.to(device)
 
@@ -215,24 +220,24 @@ def train_one_epoch(
             gt_depth = gt_depth.flip(-1)
             mask = mask.flip(-1)
 
-        for i in range(10):
+        for i in range(1):
             if profiler:
                 with record_function("train_batch"):
-                    pred_depth = model(rgb)
-                    loss = loss_fn(pred_depth, gt_depth, torch.ones_like(gt_depth, device=device))
+                    pred_depth = model(rgb, depth)
+                    loss = loss_fn(pred_depth, gt_depth, mask=torch.ones_like(pred_depth, device=device))
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
             else:
-                pred_depth = model(rgb)
-                loss = loss_fn(pred_depth, gt_depth, torch.ones_like(gt_depth, device=device))
+                pred_depth = model(rgb, depth)
+                loss = loss_fn(pred_depth, gt_depth, mask=torch.ones_like(pred_depth, device=device))
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
             if profiler:
                 profiler.step()
-        
+
         total_loss += loss.item()
 
         if (batch_idx % 10 == 0):
@@ -241,9 +246,9 @@ def train_one_epoch(
 
         # Quick debug saves every 10 steps
         if debug and (batch_idx % 10 == 0):
-            detached_pred = pred_depth[0].detach().cpu().numpy()
-            detached_gt   = gt_depth[0].detach().cpu().numpy()
-            detached_rgb  = rgb[0].detach().cpu().numpy()
+            detached_pred = pred_depth[0].detach().cpu().squeeze().numpy()
+            detached_gt   = gt_depth[0].detach().cpu().squeeze().numpy()
+            detached_rgb  = rgb[0].detach().cpu().squeeze().numpy()
 
             detached_pred[:, :3] = 0
             detached_pred[:, -3:] = 0
@@ -304,15 +309,15 @@ def validate_one_epoch(
 
     for batch_idx, batch in enumerate(loader):
         rgb = batch['rgb'].to(device)
-        gt_depth = batch['gt'].to(device).squeeze()
+        gt_depth = batch['gt'].to(device).unsqueeze(1)
+        depth = batch['depth'].to(device).unsqueeze(1)
         mask = batch.get('mask', None)
         if mask is not None:
             mask = mask.to(device)
 
         with torch.no_grad():
-            pred = model(rgb)
-            pred = F.interpolate(pred[:, None], gt_depth.shape[-2:], mode='bilinear', align_corners=True)[0, 0]
-            loss = loss_fn(pred, gt_depth, torch.ones_like(gt_depth, device=device))
+            pred = model(rgb, depth)
+            loss = loss_fn(pred, gt_depth, mask=torch.ones_like(depth, device=device))
 
         total_loss += loss.item()
 
@@ -487,7 +492,8 @@ def main(config_path: str):
     }
     backbone = training_cfg.get("backbone", "vitl")
 
-    model = DepthAnythingV2(**{**model_configs[backbone], 'max_depth': 20}) # FIXME: Unhardcode the 20
+    #model = DepthAnythingV2(**{**model_configs[backbone], 'max_depth': 20}) # FIXME: Unhardcode the 20
+    model = DepthCompletionModel()
     model.to(device)
 
     # Check if we want to load a local checkpoint
@@ -519,7 +525,7 @@ def main(config_path: str):
     export_trace_path = profiling_cfg.get("export_trace", "profile_trace.json")
 
     # 9) Construct the DepthLoss
-    loss_fn = SiLogLoss().to(device)
+    loss_fn = MonoDepthLoss(device=device) #SiLogLoss().to(device)
 
     # 10) Training Loop
     #previous_best = {'d1': 0, 'd2': 0, 'd3': 0, 'abs_rel': 100, 'sq_rel': 100, 'rmse': 100, 'rmse_log': 100, 'log10': 100, 'silog': 100}
