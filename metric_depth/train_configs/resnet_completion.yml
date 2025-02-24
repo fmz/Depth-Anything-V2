@@ -20,7 +20,7 @@ training:
 
   output_dir: "./checkpoints_dpt"
   save_intermediate_models: False
-  device: "mps"
+  device: "cuda"
   debug: true
   # Use a standard 640x480 resolution
   input_width: 640

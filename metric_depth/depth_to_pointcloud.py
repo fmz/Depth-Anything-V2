@@ -53,7 +53,6 @@ def main():
 
     # Determine the device to use (CUDA, MPS, or CPU)
     DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-    DEVICE = 'cpu'
 
     # Model configuration based on the chosen encoder
     model_configs = {

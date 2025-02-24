@@ -130,27 +130,29 @@ class MultiScaleDecoder(nn.Module):
 class DepthAnythingCrossAttention(nn.Module):
     def __init__(
         self,
-        encoder='vitl',            # e.g. 'vitl' -> ViT Large
-        intermediate_idx=None,     # which layers to extract
+        encoder='vitl',
         max_depth=20.0,
         num_heads=4,
         attn_embed_dim=256,
     ):
         super().__init__()
-        if intermediate_idx is None:
-            # For 'vitl', your code used [4, 11, 17, 23]
-            self.intermediate_idx = [4, 11, 17, 23]
-        else:
-            self.intermediate_idx = intermediate_idx
+
+        self.intermediate_layer_idx = {
+            'vits': [2, 5, 8, 11],
+            'vitb': [2, 5, 8, 11], 
+            'vitl': [4, 11, 17, 23], 
+            'vitg': [9, 19, 29, 39]
+        }
+        # Index into the pretrained DINOv2 model's intermediate layers
+        self.rgb_intermediate_idx = self.intermediate_layer_idx[encoder]
 
         self.max_depth = max_depth
 
-        # 1) DINOv2 as the RGB encoder
+        # 1) DINOv2 as the RGB encoder (pretrained)
         self.rgb_encoder = DINOv2(model_name=encoder)
 
-        # 2) Depth encoder
+        # 2) Depth encoder (not pretrained)
         self.depth_encoder = DepthEncoder(in_ch=1, base_ch=32)
-        # or replace with a Transformer-based approach
 
         # 3) Cross attention blocks (example: multi-scale or single-scale)
         # We'll do cross-attn at two scales: depth_encoder outputs [f3, f2, f1].

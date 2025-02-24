@@ -20,7 +20,7 @@ logger = logging.getLogger("dinov2")
 try:
     from xformers.ops import memory_efficient_attention, unbind, fmha
 
-    XFORMERS_AVAILABLE = False 
+    XFORMERS_AVAILABLE = True
 except ImportError:
     logger.warning("xFormers not available")
     XFORMERS_AVAILABLE = False
@@ -80,4 +80,4 @@ class MemEffAttention(Attention):
         x = self.proj_drop(x)
         return x
 
-        
+

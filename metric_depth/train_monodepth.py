@@ -19,7 +19,8 @@ import piqa
 # Local project imports
 from nyuloader_v2 import NYUDepthDataset
 #from depth_anything_v2.dpt import DepthAnythingV2
-from depth_anything_v2.resnet_dc import DepthCompletionModel
+#from depth_anything_v2.resnet_dc import DepthCompletionModel
+from depth_anything_v2.dpt_v2 import DepthAnythingCrossAttention
 from utils import (
     get_optimizer,
     save_depth,
@@ -248,21 +249,27 @@ def train_one_epoch(
         if debug and (batch_idx % 10 == 0):
             detached_pred = pred_depth[0].detach().cpu().squeeze().numpy()
             detached_gt   = gt_depth[0].detach().cpu().squeeze().numpy()
+            detached_depth = depth[0].detach().cpu().squeeze().numpy()
             detached_rgb  = rgb[0].detach().cpu().squeeze().numpy()
 
             detached_pred[:, :3] = 0
             detached_pred[:, -3:] = 0
             detached_gt[:, :3] = 0
             detached_gt[:, -3:] = 0
+            detached_depth[:, :3] = 0
+            detached_depth[:, -3:] = 0
 
             detached_pred[:6, :] = 0
             detached_pred[-6:, :] = 0
             detached_gt[:6, :] = 0
             detached_gt[-6:, :] = 0
+            detached_depth[:6, :] = 0
+            detached_depth[-6:, :] = 0
 
             save_depth(detached_pred, 'tmp/pred_depth.png')
             save_depth(detached_gt,   'tmp/gt_depth.png')
             save_rgb(detached_rgb,    'tmp/input_rgb.png')
+            save_depth(detached_depth, 'tmp/input_depth.png')
 
     avg_loss = total_loss / len(loader)
     t_end = time.time()
