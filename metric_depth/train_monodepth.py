@@ -29,7 +29,7 @@ from utils import (
 )
 from util.debug import Break
 from util.loss import SiLogLoss
-# from util.metric import eval_depth
+from util.metric import eval_depth
 
 
 ###############################################################################
@@ -300,7 +300,7 @@ def validate_one_epoch(
     results = {'d1': torch.tensor([0.0]).cuda(), 'd2': torch.tensor([0.0]).cuda(), 'd3': torch.tensor([0.0]).cuda(),
                'abs_rel': torch.tensor([0.0]).cuda(), 'sq_rel': torch.tensor([0.0]).cuda(), 'rmse': torch.tensor([0.0]).cuda(),
                'rmse_log': torch.tensor([0.0]).cuda(), 'log10': torch.tensor([0.0]).cuda(), 'silog': torch.tensor([0.0]).cuda()}
-    nsamples = torch.tensor([0.0]).cuda()
+    n_samples = torch.tensor([0.0]).cuda()
 
     for batch_idx, batch in enumerate(loader):
         rgb = batch['rgb'].to(device)
@@ -316,14 +316,27 @@ def validate_one_epoch(
 
         total_loss += loss.item()
 
+        cur_results = eval_depth(pred, gt_depth)
+
+        # Accumulate results
+        for k in results.keys():
+            results[k] += cur_results[k]
+        n_samples += 1
+
         if (batch_idx % 10 == 0):
             logging.info(
                 f"[Epoch {epoch}] Val Batch {batch_idx}/{len(loader)} => "
                 f"Loss {loss.item():.4f}"
             )
-
+    
     avg_loss = total_loss / len(loader)
     t_end = time.time()
+
+    logging.info('==========================================================================================')
+    logging.info('{:>8}, {:>8}, {:>8}, {:>8}, {:>8}, {:>8}, {:>8}, {:>8}, {:>8}'.format(*tuple(results.keys())))
+    logging.info('{:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}, {:8.3f}'.format(*tuple([(v / n_samples).item() for v in results.values()])))
+    logging.info('==========================================================================================')
+    print()
 
     logging.info(
         f"[Epoch {epoch}] Validation finished in {t_end - t_start:.2f}s "
@@ -510,8 +523,8 @@ def main(config_path: str):
 
     # 10) Training Loop
     #previous_best = {'d1': 0, 'd2': 0, 'd3': 0, 'abs_rel': 100, 'sq_rel': 100, 'rmse': 100, 'rmse_log': 100, 'log10': 100, 'silog': 100}
-    best_train_loss = 0.0
-    best_val_loss = 0.0
+    best_train_loss = float('inf')
+    best_val_loss = float('inf')
     best_model_state = None
     epochs = training_cfg.get("epochs", 10)
 
@@ -577,12 +590,13 @@ def main(config_path: str):
         logging.info(f"[Epoch {epoch}] train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
 
         if val_loss < best_val_loss:
+            Break.point()
             best_val_loss = val_loss
             best_model_state = copy.deepcopy(model.state_dict())
 
             logging.info(f"New best val_loss={best_val_loss:.4f}")
 
-            if (cfg.get("save_intermediate_models", False)):
+            if (training_cfg.get("save_intermediate_models", False)):
                 save_checkpoint(
                     model_state_dict=best_model_state,
                     optimizer_state_dict=optimizer.state_dict(),
