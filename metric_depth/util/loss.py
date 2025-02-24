@@ -9,7 +9,7 @@ class SiLogLoss(nn.Module):
 
     def forward(self, pred, target, valid_mask):
         valid_mask = valid_mask.detach().bool()
-        diff_log = torch.log(target[valid_mask]) - torch.log(pred[valid_mask])
+        diff_log = torch.log(target[valid_mask] + 0.0001) - torch.log(pred[valid_mask] + 0.0001)
         loss = torch.sqrt(torch.pow(diff_log, 2).mean() -
                           self.lambd * torch.pow(diff_log.mean(), 2))
 

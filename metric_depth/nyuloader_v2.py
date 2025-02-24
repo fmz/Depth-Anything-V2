@@ -209,10 +209,10 @@ class NYUDepthDataset(Dataset):
         sample['mask']  = sample['mask'].squeeze(dim=0)
         sample['gt']    = sample['gt'].squeeze(dim=0)
 
-        sample['rgb']   = sample['rgb'][:, 2:-2, 5:-5]
-        sample['depth'] = sample['depth'][2:-2, 5:-5]
-        sample['mask']  = sample['mask'][2:-2, 5:-5]
-        sample['gt']    = sample['gt'][2:-2, 5:-5]
+        # sample['rgb']   = sample['rgb'][:, 2:-2, 5:-5]
+        # sample['depth'] = sample['depth'][2:-2, 5:-5]
+        # sample['mask']  = sample['mask'][2:-2, 5:-5]
+        # sample['gt']    = sample['gt'][2:-2, 5:-5]
 
         return sample
 
