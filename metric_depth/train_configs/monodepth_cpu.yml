@@ -1,12 +1,13 @@
 training:
   data_path: "../datasets/nyuv2"
   pretrained_model_path: "../models/depth_anything_v2_metric_hypersim_vitl.pth"
+  divisible_by: 14
   backbone: "vitl"
 
-  batch_size: 4
+  batch_size: 2
   epochs: 20
 
-  freeze_backbone_until: 5
+  freeze_backbone_until: -1
 
   optimizer:
     type: "adam"

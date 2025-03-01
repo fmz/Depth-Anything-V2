@@ -219,6 +219,7 @@ def train_one_epoch(
         if random.random() < 0.5:
             rgb = rgb.flip(-1)
             gt_depth = gt_depth.flip(-1)
+            depth = depth.flip(-1)
             mask = mask.flip(-1)
 
         for i in range(1):
@@ -246,7 +247,7 @@ def train_one_epoch(
                          f"Loss: {loss.item():.4f}")
 
         # Quick debug saves every 10 steps
-        if debug and (batch_idx % 10 == 0):
+        if debug and (batch_idx % 1 == 0):
             detached_pred = pred_depth[0].detach().cpu().squeeze().numpy()
             detached_gt   = gt_depth[0].detach().cpu().squeeze().numpy()
             detached_depth = depth[0].detach().cpu().squeeze().numpy()
@@ -309,10 +310,14 @@ def validate_one_epoch(
     total_loss = 0.0
     t_start = time.time()
 
-    results = {'d1': torch.tensor([0.0]).cuda(), 'd2': torch.tensor([0.0]).cuda(), 'd3': torch.tensor([0.0]).cuda(),
-               'abs_rel': torch.tensor([0.0]).cuda(), 'sq_rel': torch.tensor([0.0]).cuda(), 'rmse': torch.tensor([0.0]).cuda(),
-               'rmse_log': torch.tensor([0.0]).cuda(), 'log10': torch.tensor([0.0]).cuda(), 'silog': torch.tensor([0.0]).cuda()}
-    n_samples = torch.tensor([0.0]).cuda()
+    results = {'d1': torch.tensor([0.0]), 'd2': torch.tensor([0.0]), 'd3': torch.tensor([0.0]),
+               'abs_rel': torch.tensor([0.0]), 'sq_rel': torch.tensor([0.0]), 'rmse': torch.tensor([0.0]),
+               'rmse_log': torch.tensor([0.0]), 'log10': torch.tensor([0.0]), 'silog': torch.tensor([0.0])}
+    n_samples = torch.tensor([0.0])
+    for key, value in results:
+        results[key].to(device)
+
+    n_samples.to(device)
 
     for batch_idx, batch in enumerate(loader):
         rgb = batch['rgb'].to(device)
@@ -340,7 +345,7 @@ def validate_one_epoch(
                 f"[Epoch {epoch}] Val Batch {batch_idx}/{len(loader)} => "
                 f"Loss {loss.item():.4f}"
             )
-    
+
     avg_loss = total_loss / len(loader)
     t_end = time.time()
 
@@ -453,6 +458,7 @@ def main(config_path: str):
 
     # 4) Dataset & Dataloader
     dataset_path = training_cfg['data_path']
+    divisible_by = training_cfg.get('divisible_by', 0)
     train_dataset = NYUDepthDataset(
         data_dir=dataset_path,
         mode="train",
@@ -460,7 +466,8 @@ def main(config_path: str):
         add_noise=True,
         height=480,
         width=640,
-        resize=True
+        resize=True,
+        divisible_by=divisible_by
     )
     train_loader = DataLoader(
         train_dataset,
@@ -476,7 +483,8 @@ def main(config_path: str):
         add_noise=False,
         height=480,
         width=640,
-        resize=True
+        resize=True,
+        divisible_by=None
     )
     val_loader = DataLoader(
         val_dataset,
@@ -500,7 +508,9 @@ def main(config_path: str):
     backbone = training_cfg.get("backbone", "vitl")
 
     #model = DepthAnythingV2(**{**model_configs[backbone], 'max_depth': 20}) # FIXME: Unhardcode the 20
-    model = DepthCompletionModel()
+    #model = DepthCompletionModel()
+    model = DepthAnythingCrossAttention(encoder='vitl') # FIXME: Unhardcode the 20
+
     model.to(device)
 
     # Check if we want to load a local checkpoint
@@ -516,10 +526,10 @@ def main(config_path: str):
         out_model_prefix = "danything_mono_metric"
 
     # 6) Freeze/Unfreeze Setup
-    # freeze_until = training_cfg.get("freeze_backbone_until", 0)
-    # if freeze_until != 0:
-    #     logging.info("Freezing the backbone for partial fine-tuning.")
-    #     model.freeze_backbone()
+    freeze_until = training_cfg.get("freeze_backbone_until", 0)
+    if freeze_until != 0:
+        logging.info("Freezing the backbone for partial fine-tuning.")
+        model.freeze_backbone()
 
     # 7) Optimizer & Scheduler
     optimizer = get_optimizer(model, training_cfg['optimizer'])
@@ -551,10 +561,11 @@ def main(config_path: str):
         #             'log10: {:.3f}, silog: {:.3f}'.format(
         #                 epoch, epochs, previous_best['abs_rel'], previous_best['sq_rel'], previous_best['rmse'],
         #                 previous_best['rmse_log'], previous_best['log10'], previous_best['silog']))
+
         # Optionally unfreeze backbone after warmup
-        # if epoch == freeze_until + 1:
-        #     logging.info(f"Unfreezing the backbone at epoch {epoch}")
-        #     model.unfreeze_backbone()
+        if epoch == freeze_until + 1:
+            logging.info(f"Unfreezing the backbone at epoch {epoch}")
+            model.unfreeze_backbone()
 
         if enable_profiling and epoch == 1:
             with profile(

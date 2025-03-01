@@ -68,12 +68,12 @@ class DepthEncoder(nn.Module):
             nn.ReLU(inplace=True)
         )  # -> [B, base_ch, H/2, W/2]
         self.conv2 = nn.Sequential(
-            nn.Conv2d(base_ch, base_ch*2, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(base_ch, base_ch*2, kernel_size=7, stride=7, padding=0),
             nn.BatchNorm2d(base_ch*2),
             nn.ReLU(inplace=True)
         )  # -> [B, 2*base_ch, H/4, W/4]
         self.conv3 = nn.Sequential(
-            nn.Conv2d(base_ch*2, base_ch*4, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(base_ch*2, base_ch*4, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(base_ch*4),
             nn.ReLU(inplace=True)
         )  # -> [B, 4*base_ch, H/8, W/8]
@@ -91,15 +91,36 @@ class DepthEncoder(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_ch, out_ch, 3, stride=2, padding=1, output_padding=1)
-        self.iconv = nn.Conv2d(out_ch*2, out_ch, kernel_size=3, padding=1)
+
+        out_ch3 = in_ch   // 2
+        out_ch2 = out_ch3 // 2
+        out_ch1 = out_ch2 // 2
+
+        # See the depth encoder
+        self.up3 = nn.ConvTranspose2d(in_ch, in_ch, 3, stride=1, padding=1)
+        self.up2 = nn.ConvTranspose2d(out_ch3, out_ch1, 7, stride=7)
+        self.up1 = nn.ConvTranspose2d(out_ch2, out_ch1, 3, stride=2, padding=1, output_padding=1)
+
+        self.iconv3 = nn.Conv2d(in_ch*2, out_ch3, kernel_size=3, padding=1)
+        self.iconv2 = nn.Conv2d(out_ch2, out_ch2, kernel_size=3, padding=1)
+        self.iconv1 = nn.Conv2d(out_ch1, out_ch1, kernel_size=3, padding=1)
+
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x, skip):
-        x = self.relu(self.up(x))
-        if skip is not None:
-            x = torch.cat([x, skip], dim=1)
-        x = self.relu(self.iconv(x))
+    def forward(self, feats):
+
+        x = feats[0]
+        x = self.relu(self.up3(x))
+        x = torch.cat([x, feats[1]], dim=1)
+        x = self.relu(self.iconv3(x))
+
+        x = self.relu(self.up2(x))
+        x = torch.cat([x, feats[2]], dim=1)
+        x = self.relu(self.iconv2(x))
+
+        x = self.relu(self.up1(x))
+        x = self.relu(self.iconv1(x))
+
         return x
 
 class MultiScaleDecoder(nn.Module):
@@ -113,17 +134,12 @@ class MultiScaleDecoder(nn.Module):
           ch_out= [256,128,64]
         """
         super().__init__()
-        self.up1 = UpBlock(ch_in[0], ch_out[0])
-        self.up2 = UpBlock(ch_out[0], ch_out[1])
-        self.up3 = UpBlock(ch_out[1], ch_out[2])
+        self.up = UpBlock(ch_in[0], ch_out[0])
         self.out_conv = nn.Conv2d(ch_out[2], 1, kernel_size=3, padding=1)
 
     def forward(self, feats):
         # feats: [f0, f1, f2], from deep to shallow
-        x = feats[0]                # deepest
-        x = self.up1(x, feats[1])   # mid
-        x = self.up2(x, feats[2])   # shallow
-        x = self.up3(x, None)       # if we have only 3 scales
+        x = self.up(feats)
         depth = self.out_conv(x)
         return depth
 
@@ -134,13 +150,14 @@ class DepthAnythingCrossAttention(nn.Module):
         max_depth=20.0,
         num_heads=4,
         attn_embed_dim=256,
+        **kwargs
     ):
         super().__init__()
 
         self.intermediate_layer_idx = {
             'vits': [2, 5, 8, 11],
-            'vitb': [2, 5, 8, 11], 
-            'vitl': [4, 11, 17, 23], 
+            'vitb': [2, 5, 8, 11],
+            'vitl': [4, 11, 17, 23],
             'vitg': [9, 19, 29, 39]
         }
         # Index into the pretrained DINOv2 model's intermediate layers
@@ -150,6 +167,7 @@ class DepthAnythingCrossAttention(nn.Module):
 
         # 1) DINOv2 as the RGB encoder (pretrained)
         self.rgb_encoder = DINOv2(model_name=encoder)
+
 
         # 2) Depth encoder (not pretrained)
         self.depth_encoder = DepthEncoder(in_ch=1, base_ch=32)
@@ -173,8 +191,16 @@ class DepthAnythingCrossAttention(nn.Module):
         # next scale is also 256, shallow scale is e.g. 64 or 32. We'll keep it simple.
         self.decoder = MultiScaleDecoder(
             ch_in=[256, 256, 32],  # for example
-            ch_out=[256, 128, 64]
+            ch_out=[256, 128, 32]
         )
+
+    def freeze_backbone(self):
+        for param in self.rgb_encoder.parameters():
+            param.requires_grad = False
+
+    def unfreeze_backbone(self):
+        for param in self.rgb_encoder.parameters():
+            param.requires_grad = True
 
     def forward(self, rgb, depth):
         """
@@ -186,9 +212,9 @@ class DepthAnythingCrossAttention(nn.Module):
 
         # 1) Get DINOv2 intermediate features (tokens)
         features = self.rgb_encoder.get_intermediate_layers(
-            rgb, self.intermediate_idx, return_class_token=True
+            rgb, self.rgb_intermediate_idx, return_class_token=True
         )
-        # features is a list of length len(self.intermediate_idx).
+        # features is a list of length len(self.rgb_intermediate_idx).
         # each element might be (tokens, cls_token) if return_class_token=True.
 
         # For illustration, let's use only 2 from the 4 features

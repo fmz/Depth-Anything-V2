@@ -62,6 +62,49 @@ def guided_filter(rgb_img, depth_img, radius=2, eps=1e-3):
 
     return guided
 
+class ResizeAndCrop:
+    """
+    A custom transform that first resizes an image to (target_height, target_width)
+    and then center–crops it to (crop_height, crop_width).
+    """
+    def __init__(
+        self,
+        target_height: int,
+        target_width: int,
+        crop_height: int,
+        crop_width: int,
+        resize_target: bool = False,
+        keep_aspect_ratio: bool = False,
+        ensure_multiple_of: int = 1,
+        resize_method: str = "minimal",
+        image_interpolation_method = cv2.INTER_CUBIC,
+    ):
+        self.target_height = target_height
+        self.target_width = target_width
+        self.crop_height = crop_height
+        self.crop_width = crop_width
+        self.resize_target = resize_target
+        self.keep_aspect_ratio = keep_aspect_ratio
+        self.ensure_multiple_of = ensure_multiple_of
+        self.resize_method = resize_method
+        self.image_interpolation_method = image_interpolation_method
+
+    def __call__(self, sample: dict) -> dict:
+        image = sample["image"]
+        # First, resize to the full target dimensions.
+        image = cv2.resize(
+            image,
+            (self.target_width, self.target_height),
+            interpolation=self.image_interpolation_method,
+        )
+        # Then compute center crop coordinates to get dimensions divisible by factor.
+        top = (self.target_height - self.crop_height) // 2
+        left = (self.target_width - self.crop_width) // 2
+        image = image[top: top + self.crop_height, left: left + self.crop_width]
+        sample["image"] = image
+        return sample
+
+# Modified Dataset class integrating resize+crop into one shot.
 class NYUDepthDataset(Dataset):
     """
     A dataset for NYU-based depth completion or depth estimation tasks.
@@ -85,15 +128,9 @@ class NYUDepthDataset(Dataset):
         add_noise: bool = False,
         height: int = 480,
         width: int = 640,
-        # For advanced usage, we can store camera intrinsics or pass them externally
-        # k_matrix: np.ndarray = None,
-        # The following paths assume your data structure:
-        #   data_dir/<mode>/{gt, depth, img}, plus data_dir/mask
-        # If you have different structures, adapt accordingly:
         mask_dir: str = None,
         resize: bool = True,
-        # Possibly additional control over how we handle bounding/cropping
-        # etc.
+        divisible_by: int = None,
     ):
         """
         Args:
@@ -107,7 +144,7 @@ class NYUDepthDataset(Dataset):
         """
         super().__init__()
 
-        # 1) Paths
+        # 1) Paths.
         self.data_dir = data_dir
         self.mode = mode
         self.use_mask = use_mask
@@ -116,14 +153,12 @@ class NYUDepthDataset(Dataset):
         self.rgb_path = os.path.join(data_dir, mode, "img")
         self.lidar_path = os.path.join(data_dir, mode, "depth")  # sparse depth
         self.gt_path = os.path.join(data_dir, mode, "gt")        # ground-truth depth
-        # If no mask_dir is specified, fallback to data_dir/mask
         self.mask_path = mask_dir if mask_dir else os.path.join(data_dir, "mask")
 
-        # 2) Collect file lists
-        # Note: We assume .npy for depth/gt, .png for rgb
+        # 2) Collect file lists.
         self.lidar_files = sorted(glob.glob(os.path.join(self.lidar_path, "*.npy")))
         self.rgb_files = sorted(glob.glob(os.path.join(self.rgb_path, "*.png")))
-        self.gt_files = sorted(glob.glob(os.path.join(self.gt_path, "*.npy")))  # can be empty if test
+        self.gt_files = sorted(glob.glob(os.path.join(self.gt_path, "*.npy")))
         self.mask_files = sorted(glob.glob(os.path.join(self.mask_path, "*.npy")))
 
         if len(self.rgb_files) == 0:
@@ -131,88 +166,97 @@ class NYUDepthDataset(Dataset):
         if len(self.lidar_files) == 0:
             raise RuntimeError(f"No Lidar depth found in {self.lidar_path}")
 
-        # It's possible that gt_files is empty if test. We'll handle that carefully in __getitem__.
-
-        # 3) Image size, etc.
+        # 3) Image size & crop: if divisible_by is provided, we compute the final dimensions.
         self.height = height
         self.width = width
         self.resize = resize
+        self.divisible_by = divisible_by
 
-        # 4) Transforms
-        # We'll forcibly resize + normalize the RGB to [C,H,W], [0..1]->[-1..1], etc.
-        # If you want EXACT 640x480, you can set keep_aspect_ratio=False, etc.
+        # 4) Transforms.
         transform_list = []
         if self.resize:
-            transform_list.append(
-                Resize(
-                    width=self.width,
-                    height=self.height,
-                    resize_target=False,  # We'll handle depth resizing ourselves
-                    keep_aspect_ratio=False,
-                    ensure_multiple_of=1,
-                    resize_method="minimal",
-                    image_interpolation_method=cv2.INTER_CUBIC,
+            if self.divisible_by is not None and self.divisible_by > 0:
+                # Compute final crop dimensions that are divisible by the factor.
+                new_H = (self.height // self.divisible_by) * self.divisible_by
+                new_W = (self.width // self.divisible_by) * self.divisible_by
+                # Use our combined transform.
+                transform_list.append(
+                    ResizeAndCrop(
+                        target_height=self.height,
+                        target_width=self.width,
+                        crop_height=new_H,
+                        crop_width=new_W,
+                        resize_target=False,
+                        keep_aspect_ratio=False,
+                        ensure_multiple_of=1,
+                        resize_method="minimal",
+                        image_interpolation_method=cv2.INTER_CUBIC,
+                    )
                 )
-            )
-        # For normalizing the RGB
+            else:
+                transform_list.append(
+                    Resize(
+                        width=self.width,
+                        height=self.height,
+                        resize_target=False,
+                        keep_aspect_ratio=False,
+                        ensure_multiple_of=1,
+                        resize_method="minimal",
+                        image_interpolation_method=cv2.INTER_CUBIC,
+                    )
+                )
         transform_list.append(
             #NormalizeImage(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-            NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-
+            NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         )
-        transform_list.append(PrepareForNet())  # converts to float32, permute -> [C,H,W]
+        transform_list.append(PrepareForNet())  # Converts to float32 and permutes to [C,H,W].
         self.rgb_transform = v2.Compose(transform_list)
 
     def __len__(self):
-        # We'll assume we have as many samples as the smallest set among rgb_files, lidar_files, etc.
         return min(len(self.rgb_files), len(self.lidar_files))
 
     def __getitem__(self, index):
-        # 1) Load data
+        # 1) Load file paths.
         rgb_path = self.rgb_files[index]
         lidar_path = self.lidar_files[index]
-        # If we do have GT
         gt_path = self.gt_files[index] if index < len(self.gt_files) else None
 
-        # 2) Read + transform RGB
-        rgb, rgb_numpy = self.load_rgb(rgb_path)  # shape: (C,H,W) after transform
+        # 2) Load and transform RGB.
+        rgb, rgb_numpy = self.load_rgb(rgb_path)  # Already resized & cropped.
 
-        # 3) Read Lidar depth as a FloatTensor
-        depth_sparse = self.load_npy_depth(lidar_path)  # shape: [1,H,W]
+        # 3) Load lidar depth.
+        depth_sparse = self.load_npy_depth(lidar_path)
 
-        # 4) Possibly read ground-truth
+        # 4) Optionally load ground-truth depth.
         depth_gt = None
         if gt_path and os.path.isfile(gt_path):
-            depth_gt = self.load_npy_depth(gt_path, rgb_np=rgb_numpy)  # shape: [1,H,W]
+            depth_gt = self.load_npy_depth(gt_path, rgb_np=rgb_numpy)
 
-        # 5) Preprocess Lidar depth (noise, mask)
+        # 5) Preprocess depth (noise and/or mask).
         depth_sparse, mask = self.preprocess_depth(depth_sparse)
 
-        # 6) If we want to forcibly resize the depth to match the final (H,W):
+        # 6) Resize (and crop) depth and mask to match final RGB dimensions.
+        # Since rgb is already processed, use its H and W.
+        final_H, final_W = rgb.shape[1], rgb.shape[2]
         if self.resize:
-            depth_sparse = self.resize_depth(depth_sparse, rgb.shape[1], rgb.shape[2])
+            depth_sparse = self.resize_depth(depth_sparse, final_H, final_W)
             if depth_gt is not None:
-                depth_gt = self.resize_depth(depth_gt, rgb.shape[1], rgb.shape[2])
-            # If you want to also resize the mask to the same shape:
-            mask = self.resize_depth(mask, rgb.shape[1], rgb.shape[2])
+                depth_gt = self.resize_depth(depth_gt, final_H, final_W)
+            mask = self.resize_depth(mask, final_H, final_W)
+
+        depth_sparse = depth_sparse.squeeze()
+        mask         = mask.squeeze()
 
         sample = {
-            "rgb": rgb,              # FloatTensor [3,H,W]
-            "depth": depth_sparse,   # FloatTensor [1,H,W] (sparse)
-            "mask": mask,            # FloatTensor [1,H,W], 1=valid, 0=invalid
+            "rgb": rgb,            # FloatTensor [3,H,W]
+            "depth": depth_sparse, # FloatTensor [1,H,W] (sparse)
+            "mask": mask,          # FloatTensor [1,H,W]
         }
         if depth_gt is not None:
+            depth_gt = depth_gt.squeeze()
             sample["gt"] = depth_gt
 
-        # 7) Hacky crop to be divisible by 14 (patch dim)
-        sample['depth'] = sample['depth'].squeeze(dim=0)
-        sample['mask']  = sample['mask'].squeeze(dim=0)
-        sample['gt']    = sample['gt'].squeeze(dim=0)
 
-        # sample['rgb']   = sample['rgb'][:, 2:-2, 5:-5]
-        # sample['depth'] = sample['depth'][2:-2, 5:-5]
-        # sample['mask']  = sample['mask'][2:-2, 5:-5]
-        # sample['gt']    = sample['gt'][2:-2, 5:-5]
 
         return sample
 
@@ -252,9 +296,9 @@ class NYUDepthDataset(Dataset):
             # In case it's already (1,H,W) or something
             arr = arr.squeeze(0)  # just to unify
 
-        if rgb_np is not None:
-            # Apply guided filter
-            arr = guided_filter(rgb_np, arr, radius=5, eps=1e-3)
+        # if rgb_np is not None:
+        #     # Apply guided filter
+        #     arr = guided_filter(rgb_np, arr, radius=5, eps=1e-3)
 
         # Expand dims
         arr = np.expand_dims(arr, axis=0)  # shape => [1,H,W]
