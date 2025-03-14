@@ -5,7 +5,7 @@ training:
   backbone: "vitl"
 
   batch_size: 2
-  epochs: 20
+  epochs: 50
 
   freeze_backbone_until: -1
 

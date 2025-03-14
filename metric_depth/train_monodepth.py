@@ -247,7 +247,7 @@ def train_one_epoch(
                          f"Loss: {loss.item():.4f}")
 
         # Quick debug saves every 10 steps
-        if debug and (batch_idx % 1 == 0):
+        if debug and (batch_idx % 10 == 0):
             detached_pred = pred_depth[0].detach().cpu().squeeze().numpy()
             detached_gt   = gt_depth[0].detach().cpu().squeeze().numpy()
             detached_depth = depth[0].detach().cpu().squeeze().numpy()
@@ -314,7 +314,7 @@ def validate_one_epoch(
                'abs_rel': torch.tensor([0.0]), 'sq_rel': torch.tensor([0.0]), 'rmse': torch.tensor([0.0]),
                'rmse_log': torch.tensor([0.0]), 'log10': torch.tensor([0.0]), 'silog': torch.tensor([0.0])}
     n_samples = torch.tensor([0.0])
-    for key, value in results:
+    for key in results:
         results[key].to(device)
 
     n_samples.to(device)
@@ -484,7 +484,7 @@ def main(config_path: str):
         height=480,
         width=640,
         resize=True,
-        divisible_by=None
+        divisible_by=divisible_by
     )
     val_loader = DataLoader(
         val_dataset,
