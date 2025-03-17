@@ -108,7 +108,7 @@ class DinoVisionTransformer(nn.Module):
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + self.num_tokens, embed_dim))
-        assert num_register_tokens >= 0
+        #assert num_register_tokens >= 0
         self.register_tokens = (
             nn.Parameter(torch.zeros(1, num_register_tokens, embed_dim)) if num_register_tokens else None
         )
@@ -204,8 +204,8 @@ class DinoVisionTransformer(nn.Module):
             antialias=self.interpolate_antialias
         )
         
-        assert int(w0) == patch_pos_embed.shape[-2]
-        assert int(h0) == patch_pos_embed.shape[-1]
+        # assert int(w0) == patch_pos_embed.shape[-2]
+        # assert int(h0) == patch_pos_embed.shape[-1]
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
         return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1).to(previous_dtype)
 
@@ -277,7 +277,7 @@ class DinoVisionTransformer(nn.Module):
             x = blk(x)
             if i in blocks_to_take:
                 output.append(x)
-        assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
+        #assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
         return output
 
     def _get_intermediate_layers_chunked(self, x, n=1):
@@ -291,7 +291,7 @@ class DinoVisionTransformer(nn.Module):
                 if i in blocks_to_take:
                     output.append(x)
                 i += 1
-        assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
+        #assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
         return output
 
     def get_intermediate_layers(

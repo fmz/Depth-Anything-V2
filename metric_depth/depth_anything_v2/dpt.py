@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.transforms import Compose
+import time
 
 from .dinov2 import DINOv2
 from .util.blocks import FeatureFusionBlock, _make_scratch
@@ -185,20 +186,23 @@ class DepthAnythingV2(nn.Module):
         return depth.squeeze(1)
     
     @torch.no_grad()
-    def infer_image(self, raw_image, input_size=518):
-        image, (h, w) = self.image2tensor(raw_image, input_size)
+    def infer_image(self, raw_image, input_width=518, input_height=518):
+        image, (h, w) = self.image2tensor(raw_image, input_width, input_height)
         
+        t_start = time.time()
         depth = self.forward(image)
+        print(f'Forward time: {time.time() - t_start:.2f}s')
         
-        depth = F.interpolate(depth[:, None], (h, w), mode="bilinear", align_corners=True)[0, 0]
-        
+        #breakpoint()
+        #depth = F.interpolate(depth[:, None], (h, w), mode="bilinear", align_corners=True)[0, 0]
+        depth = depth.squeeze()
         return depth.cpu().numpy()
     
-    def image2tensor(self, raw_image, input_size=518):        
+    def image2tensor(self, raw_image, input_width=518, input_height=518):        
         transform = Compose([
             Resize(
-                width=input_size,
-                height=input_size,
+                width=input_width,
+                height=input_height,
                 resize_target=False,
                 keep_aspect_ratio=True,
                 ensure_multiple_of=14,
