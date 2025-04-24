@@ -43,8 +43,8 @@ def export_depthanything(
     model,
     output_path,
     batch_size=1,
-    height=476,
-    width=630,
+    height=640,
+    width=480,
     dynamic=False,
     fp16=False,
     opset=15,
@@ -52,8 +52,8 @@ def export_depthanything(
 ):
     model.eval()
 
-    if height % 14 != 0 or width % 14 != 0:
-        raise ValueError("Input height and width must be divisible by 14")
+    # if height % 14 != 0 or width % 14 != 0:
+    #     raise ValueError("Input height and width must be divisible by 14")
     
     # Determine dummy input shape and dtype
     bs = batch_size if batch_size and batch_size > 0 else 1
@@ -97,7 +97,7 @@ def export_depthanything(
         output_fp16_path = output_path.replace(".onnx", "_fp16.onnx")
         # onnx.save(model_mixed, output_fp16_path)
         feed_dict = {'rgb': dummy_input.detach().cpu().numpy()}
-        model_fp16 = onnxconverter_common.auto_convert_mixed_precision(model_fp32, feed_dict, rtol=0.1, atol=0.001, keep_io_types=True)
+        model_fp16 = onnxconverter_common.auto_convert_mixed_precision(model_fp32, feed_dict, rtol=0.5, atol=0.00001, keep_io_types=True)
         onnx.save(model_fp16, output_fp16_path)
         print(f"Model converted to mixed precision (FP16 weights, FP32 I/O) and saved to {output_fp16_path}.")
 

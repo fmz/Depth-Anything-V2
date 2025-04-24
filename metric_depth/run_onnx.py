@@ -26,6 +26,10 @@ def preprocess_image(image, input_width, input_height):
     image_chw = np.transpose(image_float, (2, 0, 1))
     # Add batch dimension: (1, C, H, W)
     input_tensor = np.expand_dims(image_chw, axis=0)
+    # Normalize the input tensor
+    mean = np.array([0.485, 0.456, 0.406]).reshape((1, 3, 1, 1))
+    std = np.array([0.229, 0.224, 0.225]).reshape((1, 3, 1, 1))
+    input_tensor = ((input_tensor - mean) / std).astype(np.float32)
     return input_tensor
 
 def main():
@@ -34,9 +38,9 @@ def main():
     )
     parser.add_argument('--img-path', type=str, required=True,
                         help="Path to an image file or a directory (or a text file listing image paths)")
-    parser.add_argument('--input-width', type=int, default=630,
+    parser.add_argument('--input-width', type=int, default=640,
                         help="Input width for the model")
-    parser.add_argument('--input-height', type=int, default=476,
+    parser.add_argument('--input-height', type=int, default=480,
                         help="Input height for the model")
     parser.add_argument('--outdir', type=str, default='./vis_depth',
                         help="Directory to save visualization images")
@@ -68,7 +72,7 @@ def main():
         filenames = glob.glob(os.path.join(args.img_path, '**/*'), recursive=True)
 
     os.makedirs(args.outdir, exist_ok=True)
-    cmap = matplotlib.colormaps.get_cmap('Spectral')
+    cmap = matplotlib.colormaps.get_cmap('turbo')
 
     for k, filename in enumerate(filenames):
         print(f'Progress {k+1}/{len(filenames)}: {filename}')
