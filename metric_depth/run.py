@@ -1,4 +1,5 @@
 import argparse
+import sys
 import cv2
 import glob
 import matplotlib
@@ -6,14 +7,47 @@ import numpy as np
 import os
 import torch
 
+import time
+
 from depth_anything_v2.dpt import DepthAnythingV2
+
+def load_local_checkpoint(
+        model: torch.nn.Module,
+        checkpoint_path: str,
+        device: torch.device,
+        strict=False) -> None:
+    """
+    Loads a local checkpoint into the model's state_dict.
+
+    Args:
+        model (nn.Module): The model to load weights into.
+        checkpoint_path (str): Path to the checkpoint file.
+        device (torch.device): The device for loading.
+        strict (bool): Whether to enforce that all keys match exactly.
+    """
+    print(f"Attempting to load checkpoint from {checkpoint_path} with strict={strict}")
+    ckpt = torch.load(checkpoint_path, map_location=device)
+
+    # If the checkpoint was saved with a dictionary containing "model_state" or similar
+    if "model_state" in ckpt:
+        model_sd = ckpt["model_state"]
+    else:
+        model_sd = ckpt  # assume it's a direct state_dict
+
+    missing, unexpected = model.load_state_dict(model_sd, strict=strict)
+    if missing:
+        print(f"Missing keys in state_dict: {missing}")
+    if unexpected:
+        print(f"Unexpected keys in state_dict: {unexpected}")
+    print("Checkpoint loaded.")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Depth Anything V2 Metric Depth Estimation')
     
     parser.add_argument('--img-path', type=str)
-    parser.add_argument('--input-size', type=int, default=518)
+    parser.add_argument('--input-width', type=int, default=630)
+    parser.add_argument('--input-height', type=int, default=476)
     parser.add_argument('--outdir', type=str, default='./vis_depth')
     
     parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitb', 'vitl', 'vitg'])
@@ -27,16 +61,24 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+    #DEVICE = 'cpu'
     
     model_configs = {
-        'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
+        'vits': {'encoder': 'vits', 'features': 64,  'out_channels': [48, 96, 192, 384]},
         'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
         'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
     }
     
     depth_anything = DepthAnythingV2(**{**model_configs[args.encoder], 'max_depth': args.max_depth})
-    depth_anything.load_state_dict(torch.load(args.load_from, map_location='cpu'))
+
+    if os.path.isfile(args.load_from):
+        load_local_checkpoint(depth_anything, args.load_from, device=DEVICE, strict=False)
+        out_model_prefix = "danything_mono_metric_finetune"
+    else:
+        print(f"model_path={args.load_from} not found, using default timm-based weights.")
+        sys.exit(1)
+
     depth_anything = depth_anything.to(DEVICE).eval()
     
     if os.path.isfile(args.img_path):
@@ -57,7 +99,9 @@ if __name__ == '__main__':
         
         raw_image = cv2.imread(filename)
         
-        depth = depth_anything.infer_image(raw_image, args.input_size)
+        t_start = time.time()
+        depth = depth_anything.infer_image(raw_image, args.input_width, args.input_height)
+        print(f'Inference time: {time.time() - t_start:.2f}s')
         
         if args.save_numpy:
             output_path = os.path.join(args.outdir, os.path.splitext(os.path.basename(filename))[0] + '_raw_depth_meter.npy')

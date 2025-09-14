@@ -1,0 +1,37 @@
+training:
+  data_path: "/oscar/data/jtompki1/cli277/nyuv2/nyuv2"
+  pretrained_model_path: "checkpoints/depth_anything_v2_metric_hypersim_vitl.pth"
+  #pretrained_model_path: "checkpoints_dpt/danything_mono_metric_finetune_epoch5_valloss0.0798.pth"
+
+  backbone: "vitl"
+
+  batch_size: 2
+  epochs: 7
+  freeze_backbone_until: 5
+
+  optimizer:
+    type: "adam"
+    lr: 1e-6
+    weight_decay: 1e-7
+
+  lr_scheduler:
+    type: "plateau"
+    mode: "min"
+    factor: 0.1
+    patience: 2
+
+  output_dir: "./checkpoints_dpt"
+  save_intermediate_models: True
+  device: "cuda"
+  debug: true
+  # Use a standard 640x480 resolution
+  input_width: 640
+  input_height: 480
+
+logging:
+  level: "DEBUG"
+
+profiling:
+  enable: false
+  steps_to_profile: 5
+  export_trace: "./profile_trace.json"
